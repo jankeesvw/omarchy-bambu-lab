@@ -1,0 +1,363 @@
+#!/usr/bin/env bash
+# bambu -- read a Bambu Lab printer over the local network, for the bar widget.
+#
+#   bambu trust --host <address>   pin the printer's certificate; run once
+#   bambu watch                    stream printer state as NDJSON, a line per change
+#   bambu camera                   stream chamber camera frames; prints each path
+#   bambu stop | pause | resume    control a running print
+#   bambu light on | off           the chamber light
+#   bambu demo on | off            fixed state for screenshots; commands become no-ops
+#   bambu status                   what is set up, and what is missing
+#
+# Options, before the command:
+#   --host <address>    printer address       (default: whatever trust pinned)
+#   --serial <serial>   override the serial   (default: read from the certificate)
+#
+# The printer speaks MQTT over TLS and hands its whole state to anybody on the
+# network with the LAN access code. That code is the only credential there is,
+# it cannot be scoped down, and there is no second factor -- so this script
+# takes some care with it.
+#
+# Two things follow from that. The access code never appears in an argument,
+# because /proc/<pid>/cmdline is world readable and the widget starts this
+# script over and over. And nothing talks to the printer until its certificate
+# has been pinned with `bambu trust`: printers sit on DHCP leases, so the
+# address in the settings is a guess about who is listening, and the pin is
+# what turns that into a statement about who they are.
+#
+# The MQTT itself is in bambu-mqtt.py next door. This script is the part that
+# decides what is safe to hand it.
+
+set -uo pipefail
+
+# Everything written below -- the access code, the pinned certificate -- is
+# meant for this account only, so the umask says so once rather than every
+# redirect repeating it.
+umask 077
+
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy-bambu-lab"
+# Camera frames. Pictures of the inside of a room in your house, so they live
+# somewhere only this account can read, and they are the reason `plugin remove`
+# leaves something behind worth mentioning in the README.
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/omarchy-bambu-lab"
+CODE_FILE="$CONFIG_DIR/access-code"
+PRINTER_FILE="$CONFIG_DIR/printer.json"
+DEMO_FILE="$CONFIG_DIR/demo"
+
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+MQTT="$HERE/bambu-mqtt.py"
+# One still of a real chamber, shipped with the plugin, so the demo has
+# something to put in the camera panel instead of a placeholder.
+DEMO_FRAME="${HERE%/bin}/demo/chamber.jpg"
+
+HOST=""
+SERIAL=""
+
+die() { printf 'bambu: %s\n' "$*" >&2; exit 1; }
+
+# A failure the widget is meant to display rather than a mistake in wiring:
+# it goes out as JSON on stdout so the panel has something to say.
+report() { printf '{"type":"status","connected":false,"fatal":true,"error":%s}\n' "$1"; exit 0; }
+
+# The same, but for the state every install passes through on its way to
+# working. The panel draws this as instructions rather than as a fault: a
+# printer nobody has pointed at yet is not broken, and telling somebody in red
+# that they have not finished a setup they are halfway through is a poor
+# welcome.
+setup_needed() {
+  printf '{"type":"status","connected":false,"fatal":true,"setup":true,"error":%s}\n' "$1"
+  exit 0
+}
+
+# `bash -x` traces the words of every command, and the widget's stderr goes to
+# the journal. So the trace goes off around the access code and back to
+# whatever it was afterwards.
+TRACED=0
+untrace() { case "$-" in *x*) TRACED=1; set +x ;; *) TRACED=0 ;; esac; }
+retrace() { (( TRACED )) && set -x; return 0; }
+
+# Only a regular file is worth reading. A symlink on one of these paths was put
+# there by something that is not this script.
+readable_file() { [ -f "$1" ] && [ ! -L "$1" ]; }
+
+# The config directory holds the access code, so it is checked rather than
+# assumed: mkdir -p follows a symlink to a directory and reports success, and
+# it leaves the mode of a directory that already existed alone.
+#
+# The repair runs every time and covers the contents, not just the directory.
+# A directory that is 700 today can hold files from an older version at 644,
+# and one that was ever wider can hold entries this script never put there --
+# a symlink on the access-code path sends the next write wherever the planter
+# chose. Anything that is not a regular file goes.
+private_dir() {
+  local dir="$1" owner
+  mkdir -p -m 700 -- "$dir" 2>/dev/null
+  [[ -d "$dir" && ! -L "$dir" ]] || return 1
+  owner="$(stat -c '%u' -- "$dir" 2>/dev/null)" || return 1
+  [[ "$owner" == "$(id -u)" ]] || return 1
+  chmod 700 -- "$dir" 2>/dev/null || return 1
+  find "$dir" -mindepth 1 -maxdepth 1 ! -type f -exec rm -rf -- {} + 2>/dev/null
+  find "$dir" -mindepth 1 -maxdepth 1 -type f -exec chmod 600 -- {} + 2>/dev/null
+  return 0
+}
+
+# Writing through a rename rather than a redirect: `>` follows a symlink that
+# is sitting on the path, rename(2) replaces the path itself.
+write_private() {
+  local dest="$1" tmp
+  tmp="$(mktemp "$dest.XXXXXX" 2>/dev/null)" || return 1
+  chmod 600 -- "$tmp" 2>/dev/null
+  cat > "$tmp" || { rm -f -- "$tmp"; return 1; }
+  mv -f -- "$tmp" "$dest" || { rm -f -- "$tmp"; return 1; }
+}
+
+# ------------------------------------------------------------------ validation
+#
+# Each of these is refused rather than repaired. A serial that is not shaped
+# like a serial is not a typo to clean up, it is a sign that what answered is
+# not the printer -- and it becomes the MQTT topic, so it decides what this
+# script subscribes to.
+
+valid_host()   { [[ "$1" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]{0,253}[A-Za-z0-9])?$ ]]; }
+valid_serial() { [[ "$1" =~ ^[A-Za-z0-9]{8,20}$ ]]; }
+valid_code()   { [[ "$1" =~ ^[A-Za-z0-9]{6,32}$ ]]; }
+valid_hash()   { [[ "$1" =~ ^[0-9a-f]{64}$ ]]; }
+
+# ---------------------------------------------------------------------- config
+
+# The access code, from the environment for a one-off run and otherwise from
+# the file that `bambu trust` tells you to write. Never from an argument.
+access_code() {
+  local code=""
+  untrace
+  if [ -n "${BAMBU_ACCESS_CODE:-}" ]; then
+    code="$BAMBU_ACCESS_CODE"
+  elif readable_file "$CODE_FILE"; then
+    code="$(< "$CODE_FILE")"
+  fi
+  code="${code//[$'\r\n\t ']/}"
+  retrace
+  printf '%s' "$code"
+}
+
+pinned() {
+  local field="$1"
+  readable_file "$PRINTER_FILE" || return 1
+  jq -re --arg f "$field" '.[$f] // empty' -- "$PRINTER_FILE" 2>/dev/null
+}
+
+demo_on() { readable_file "$DEMO_FILE"; }
+
+# ----------------------------------------------------------------------- trust
+
+# Reads the certificate the printer offers, shows what it is, and remembers it
+# if you say so. The serial comes out of the certificate's common name, which
+# is why the settings panel does not ask you to type one.
+cmd_trust() {
+  local host="$1" cert subject serial fingerprint old
+  [ -n "$host" ] || die "trust needs --host <address>"
+  valid_host "$host" || die "that does not look like an address"
+  command -v openssl >/dev/null 2>&1 || die "openssl is needed to read the certificate"
+
+  cert="$(openssl s_client -connect "$host:8883" -showcerts </dev/null 2>/dev/null \
+          | openssl x509 -outform PEM 2>/dev/null)"
+  [ -n "$cert" ] || die "no certificate came back from $host:8883 -- is the printer on, and is LAN mode enabled?"
+
+  subject="$(printf '%s' "$cert" | openssl x509 -noout -subject -nameopt multiline 2>/dev/null \
+             | sed -n 's/^ *commonName *= *//p')"
+  serial="${subject//[$'\r\n\t ']/}"
+  valid_serial "$serial" || die "the certificate's name is not a serial number, so this is not a Bambu printer"
+
+  fingerprint="$(printf '%s' "$cert" | openssl x509 -outform DER 2>/dev/null | sha256sum | cut -d' ' -f1)"
+  valid_hash "$fingerprint" || die "could not fingerprint the certificate"
+
+  printf 'Printer at %s\n\n' "$host"
+  printf '  Serial       %s\n' "$serial"
+  printf '  Issuer       %s\n' \
+    "$(printf '%s' "$cert" | openssl x509 -noout -issuer -nameopt oneline 2>/dev/null | sed 's/^issuer=//')"
+  printf '  Expires      %s\n' \
+    "$(printf '%s' "$cert" | openssl x509 -noout -enddate 2>/dev/null | sed 's/^notAfter=//')"
+  printf '  Fingerprint  %s\n\n' "$fingerprint"
+
+  private_dir "$CONFIG_DIR" || die "$CONFIG_DIR is not a directory of ours"
+  old="$(pinned fingerprint || true)"
+  if [ -n "$old" ] && [ "$old" != "$fingerprint" ]; then
+    printf 'This is NOT the printer pinned earlier.\n'
+    printf '  was  %s\n  now  %s\n\n' "$old" "$fingerprint"
+    printf 'Either the printer was replaced or reset, or something else is answering\n'
+    printf 'on this address. If you did not expect this, stop here.\n\n'
+  fi
+
+  printf 'Trust this printer? [y/N] '
+  local answer=""
+  # The terminal by preference, so a `bambu trust` inside a pipeline still asks
+  # the person rather than reading the pipe. Falling back to stdin when there
+  # is no terminal is what makes it scriptable at all.
+  # Opened rather than tested: /dev/tty exists as a path even in a session
+  # with no controlling terminal, where reading it fails.
+  if { : </dev/tty; } 2>/dev/null; then read -r answer </dev/tty || true
+  else read -r answer || true; fi
+  case "$answer" in
+    [yY]|[yY][eE][sS]) ;;
+    *) printf 'Nothing was written.\n'; exit 1 ;;
+  esac
+
+  jq -n --arg h "$host" --arg s "$serial" --arg f "$fingerprint" \
+    '{host: $h, serial: $s, fingerprint: $f}' | write_private "$PRINTER_FILE" \
+    || die "could not write $PRINTER_FILE"
+
+  printf '\nPinned.\n'
+  if ! readable_file "$CODE_FILE"; then
+    printf '\nOne thing left: the LAN access code, from the printer screen under\n'
+    printf 'Settings, Network, LAN Mode. Put it in a file only you can read:\n\n'
+    printf '  install -m 600 /dev/null %s\n' "$CODE_FILE"
+    printf '  printf %%s YOUR_CODE > %s\n\n' "$CODE_FILE"
+  fi
+}
+
+# ----------------------------------------------------------------------- demo
+
+# Fixed state for screenshots. Modelled on a real print with the four spools
+# actually loaded in the AMS -- white, near-black, a Bambu green and a yellow,
+# which is as good a contrast test as any for the spool graphics.
+demo_state() {
+  cat <<'EOF'
+{"type":"status","connected":true}
+{"type":"state","model":"Bambu Lab P1S","gcode_state":"RUNNING","stage":"","percent":42,"remaining_min":95,"layer":57,"total_layers":214,"task":"articulated-dragon.3mf","nozzle":220.0,"nozzle_target":220.0,"nozzle_type":"stainless steel","nozzle_diameter":"0.4","bed":55.0,"bed_target":55.0,"fan_part":100,"fan_aux":0,"fan_chamber":40,"speed":"standard","wifi":"-58dBm","light_on":true,"ams":{"present":true,"humidity":2,"trays":[{"slot":0,"present":true,"label":"PLA","colors":["#FFFFFF"],"temp_min":190,"temp_max":240,"ams":0,"active":false},{"slot":1,"present":true,"label":"PLA","colors":["#161616"],"temp_min":190,"temp_max":240,"ams":0,"active":false},{"slot":2,"present":true,"label":"PLA Basic","colors":["#00AE42"],"temp_min":190,"temp_max":230,"ams":0,"active":true},{"slot":3,"present":true,"label":"PLA","colors":["#FFF144"],"temp_min":190,"temp_max":240,"ams":0,"active":false}]},"external":{"present":false,"label":"","colors":[]},"print_error":0,"errors":[]}
+EOF
+}
+
+# ---------------------------------------------------------------------- running
+
+# Hands the printer's details to the MQTT client through the environment.
+# Nothing here reaches argv: the access code would be readable in ps for as
+# long as the process lives, and `watch` lives as long as the shell does.
+run_mqtt() {
+  local mode="$1" host serial code fingerprint
+
+  host="${HOST:-$(pinned host || true)}"
+  serial="${SERIAL:-$(pinned serial || true)}"
+  fingerprint="$(pinned fingerprint || true)"
+
+  [ -n "$fingerprint" ] || setup_needed '"no-printer"'
+  valid_hash "$fingerprint" || report '"The pinned certificate is unreadable. Run: bambu trust --host <printer address>"'
+  [ -n "$host" ] || report '"No printer address. Run: bambu trust --host <printer address>"'
+  valid_host "$host" || report '"That printer address is not a valid address."'
+  [ -n "$serial" ] || report '"No serial number. Run: bambu trust --host <printer address>"'
+  valid_serial "$serial" || report '"That serial number is not a valid serial number."'
+
+  untrace
+  code="$(access_code)"
+  if [ -z "$code" ]; then
+    retrace
+    setup_needed '"no-code"'
+  fi
+  if ! valid_code "$code"; then
+    retrace
+    report '"That access code is not shaped like an access code -- it is six to thirty-two letters and digits."'
+  fi
+
+  BAMBU_MODE="$mode" \
+  BAMBU_HOST="$host" \
+  BAMBU_SERIAL="$serial" \
+  BAMBU_FINGERPRINT="$fingerprint" \
+  BAMBU_ACCESS_CODE="$code" \
+  BAMBU_CACHE="$CACHE_DIR" \
+  exec python3 -- "$MQTT"
+}
+
+cmd_status() {
+  local host serial fingerprint
+  host="$(pinned host || true)"
+  serial="$(pinned serial || true)"
+  fingerprint="$(pinned fingerprint || true)"
+  printf 'Printer     %s\n' "${host:-not pinned}"
+  printf 'Serial      %s\n' "${serial:-unknown}"
+  printf 'Certificate %s\n' "${fingerprint:-not pinned}"
+  untrace
+  if [ -n "$(access_code)" ]; then retrace; printf 'Access code set\n'
+  else retrace; printf 'Access code MISSING -- see: bambu trust --host <address>\n'; fi
+  demo_on && printf '\nDemo mode is ON: the widget shows fixed data and commands do nothing.\n'
+  return 0
+}
+
+# ------------------------------------------------------------------------ main
+
+# Options are taken from anywhere in the line: `bambu trust --host x` is how
+# anyone would write it, and insisting the options come first is a rule that
+# exists for the parser's sake rather than the reader's.
+ARGS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --host)   [ $# -ge 2 ] || die "--host needs a value"; HOST="$2"; shift 2 ;;
+    --serial) [ $# -ge 2 ] || die "--serial needs a value"; SERIAL="$2"; shift 2 ;;
+    --) shift; while [[ $# -gt 0 ]]; do ARGS+=("$1"); shift; done ;;
+    -*) die "unknown option $1" ;;
+    *) ARGS+=("$1"); shift ;;
+  esac
+done
+set -- ${ARGS[@]+"${ARGS[@]}"}
+
+[ -n "$HOST" ] && { valid_host "$HOST" || die "that does not look like an address"; }
+[ -n "$SERIAL" ] && { valid_serial "$SERIAL" || die "that does not look like a serial number"; }
+
+command -v jq >/dev/null 2>&1 || die "jq is needed"
+
+case "${1:-status}" in
+  trust)
+    private_dir "$CONFIG_DIR" || die "$CONFIG_DIR is not a directory of ours"
+    cmd_trust "$HOST"
+    ;;
+  watch)
+    # The demo poses, and then hands back. Sleeping forever here is what made
+    # `demo off` need a shell restart to take effect: the widget went on
+    # showing a fixed 42% long after the demo flag was gone, which is exactly
+    # the way a plugin left in demo mode goes unnoticed.
+    if demo_on; then
+      demo_state
+      while demo_on; do sleep 2; done
+    fi
+    private_dir "$CONFIG_DIR" || report '"The config directory is not one of ours."'
+    run_mqtt watch
+    ;;
+  camera)
+    # Nothing to pose with in demo mode: a still of somebody else's printer
+    # would be somebody else's printer, and a fake one would look fake.
+    if demo_on; then
+      if readable_file "$DEMO_FRAME"; then
+        printf '{"type":"camera","ok":true}\n'
+        printf '{"type":"frame","path":"%s"}\n' "$DEMO_FRAME"
+      else
+        printf '{"type":"camera","ok":false,"demo":true}\n'
+      fi
+      while demo_on; do sleep 2; done
+    fi
+    private_dir "$CONFIG_DIR" || report '"The config directory is not one of ours."'
+    private_dir "$CACHE_DIR" || report '"The cache directory is not one of ours."'
+    run_mqtt camera
+    ;;
+  stop|pause|resume)
+    # Every command is a no-op while the demo is posing, so a click during a
+    # screenshot cannot reach the printer.
+    if demo_on; then printf '{"ok":true}\n'; exit 0; fi
+    run_mqtt "$1"
+    ;;
+  light)
+    if demo_on; then printf '{"ok":true}\n'; exit 0; fi
+    case "${2:-}" in
+      on)  run_mqtt light-on ;;
+      off) run_mqtt light-off ;;
+      *) die "light takes on or off" ;;
+    esac
+    ;;
+  demo)
+    private_dir "$CONFIG_DIR" || die "$CONFIG_DIR is not a directory of ours"
+    case "${2:-}" in
+      on)  : | write_private "$DEMO_FILE"; printf 'Demo mode on.\n' ;;
+      off) rm -f -- "$DEMO_FILE"; printf 'Demo mode off.\n' ;;
+      *) die "demo takes on or off" ;;
+    esac
+    ;;
+  status) cmd_status ;;
+  *) die "unknown command ${1}" ;;
+esac

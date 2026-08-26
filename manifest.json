@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "id": "jankeesvw.bambu-lab",
+  "name": "Bambu Lab",
+  "version": "1.0.0",
+  "author": "Jankees van Woezik",
+  "description": "Your Bambu Lab printer in the bar: the print, the temperatures, the AMS spools, and a stop button",
+  "homepage": "https://github.com/jankeesvw/omarchy-bambu",
+  "license": "MIT",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Bambu Lab",
+    "description": "Your Bambu Lab printer in the bar: the print, the temperatures, the AMS spools, and a stop button",
+    "category": "Home",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "host": "",
+      "panelWidth": 420,
+      "finishHoldMin": 10,
+      "notifyOnFinish": true,
+      "notifyOnError": true,
+      "showExternalSpool": true,
+      "showCamera": true
+    },
+    "schema": [
+      {
+        "key": "host",
+        "type": "string",
+        "label": "Printer address",
+        "defaultValue": "",
+        "description": "Normally left empty: setting the printer up remembers where it was. Fill in an address here when the printer moves to a different one, which a router handing out leases will do sooner or later. The certificate is what identifies the printer either way, so a wrong address here means the widget finds nothing rather than talking to the wrong thing."
+      },
+      {
+        "key": "panelWidth",
+        "type": "integer",
+        "label": "Panel width",
+        "min": 320,
+        "max": 800,
+        "step": 20,
+        "defaultValue": 420,
+        "description": "In the shell's spacing units. The row of AMS spools is measured off it and everything else lines up with them, so this one number sizes the whole panel. Anything wider than the screen is trimmed to fit."
+      },
+      {
+        "key": "showCamera",
+        "type": "boolean",
+        "label": "Show the chamber camera",
+        "defaultValue": true,
+        "description": "The view inside the printer, at the top of the panel. A P1 has no video stream to offer, so this is a sequence of stills at a frame or two a second -- enough to see whether the print is still stuck to the plate. It needs LAN Mode Liveview switched on at the printer, and it only runs while the panel is open."
+      },
+      {
+        "key": "finishHoldMin",
+        "type": "integer",
+        "label": "Keep a finished print lit for",
+        "min": 0,
+        "max": 120,
+        "step": 5,
+        "defaultValue": 10,
+        "description": "Minutes the spool in the bar stays lit after a print finishes. A print ends while you are somewhere else, so without this the news is over before you are back at the desk. Opening the panel clears it early; zero turns it off."
+      },
+      {
+        "key": "notifyOnFinish",
+        "type": "boolean",
+        "label": "Notify when a print finishes",
+        "defaultValue": true,
+        "description": "A desktop notification the moment the printer says it is done, for when the bar is not where you are looking."
+      },
+      {
+        "key": "notifyOnError",
+        "type": "boolean",
+        "label": "Notify when something goes wrong",
+        "defaultValue": true,
+        "description": "A desktop notification when a print fails or the printer raises an error. This is the one worth leaving on: a print that failed on layer nine is a print you want to hear about before it spends the night extruding into air."
+      },
+      {
+        "key": "showExternalSpool",
+        "type": "boolean",
+        "label": "Show the external spool",
+        "defaultValue": true,
+        "description": "The spool holder on the back of the printer, drawn a little apart from the four AMS slots. It only appears when something is actually loaded there, so leaving this on costs nothing if you never use it."
+      }
+    ]
+  }
+}
