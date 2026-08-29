@@ -85,6 +85,11 @@ def env(name):
     return value
 
 
+# What the printer is allowed to announce in one packet. Its opening full
+# state report is the largest thing it sends and lands in the low hundreds of
+# kilobytes, so this is generous rather than tight.
+MAX_PACKET_BYTES = 4 * 1024 * 1024
+
 # --------------------------------------------------------------- MQTT packets
 
 
@@ -246,6 +251,12 @@ class Connection:
         if not chunk:
             raise Dropped("the printer closed the connection")
         self.buf += chunk
+        # A packet under the ceiling can still be fed one byte at a time, and
+        # a peer that never completes a frame would grow this forever. The
+        # buffer holds at most one whole packet plus the chunk that carried
+        # its tail, so anything past that is not a slow printer.
+        if len(self.buf) > MAX_PACKET_BYTES + 65536:
+            raise Dropped("the printer sent more than we will buffer")
 
         while True:
             frame = self._take_packet()
@@ -279,6 +290,17 @@ class Connection:
                 break
             if multiplier > 128 ** 3:
                 raise Dropped("malformed packet length")
+        # The protocol's own ceiling is four length bytes, which is 256 MB, and
+        # a printer announcing that would have us hold the buffer until all of
+        # it arrived. The largest thing this printer actually sends is its
+        # opening full state report, measured in the low hundreds of kilobytes.
+        #
+        # There is no recovering from a length that far out: the stream is a
+        # byte sequence with no framing to resynchronise on, so everything
+        # after it would be read at the wrong offset. Dropping the connection
+        # is the only honest move, and the caller reconnects with a backoff.
+        if length > MAX_PACKET_BYTES:
+            raise Dropped("the printer announced a packet we will not hold")
         if len(self.buf) < i + length:
             return None
         header = self.buf[0]
@@ -327,6 +349,44 @@ class Dropped(Exception):
 # ------------------------------------------------------------------- reading
 
 
+# What the accumulated state is allowed to become. The printer decides what it
+# sends; these decide what we keep. A report under the packet ceiling can still
+# introduce a new key on every message, and the state is kept for the life of
+# the connection, so without a key ceiling a printer that invents names grows
+# this until the shell notices.
+MAX_STATE_DEPTH = 16
+MAX_STATE_KEYS = 512
+MAX_STATE_ITEMS = 512
+MAX_STATE_STRING = 8192
+
+
+def clamp(value, depth=0):
+    """Cut an incoming value down to a shape we are willing to keep.
+
+    Applied to what the printer sends before it is folded into the state, so
+    the ceilings hold for the accumulation and not merely for one message.
+    Truncating rather than refusing: a single overlong field is a printer
+    quirk or a firmware that grew a debug string, and losing the tail of it
+    is better than losing the report it arrived in.
+    """
+    if depth >= MAX_STATE_DEPTH:
+        return None
+    if isinstance(value, dict):
+        out = {}
+        for key, item in value.items():
+            if len(out) >= MAX_STATE_KEYS:
+                break
+            if not isinstance(key, str) or len(key) > MAX_STATE_STRING:
+                continue
+            out[key] = clamp(item, depth + 1)
+        return out
+    if isinstance(value, list):
+        return [clamp(item, depth + 1) for item in value[:MAX_STATE_ITEMS]]
+    if isinstance(value, str):
+        return value[:MAX_STATE_STRING]
+    return value
+
+
 def merge(into, delta):
     """Fold a delta report into the state we are keeping.
 
@@ -334,11 +394,16 @@ def merge(into, delta):
     the running state is the accumulation. Dicts merge key by key; anything
     else replaces, because the printer resends whole objects inside its lists
     rather than patching them.
+
+    The delta arrives already clamped, so the only unbounded thing left is the
+    number of keys the merge itself can introduce.
     """
     for key, value in delta.items():
         if isinstance(value, dict) and isinstance(into.get(key), dict):
             merge(into[key], value)
         else:
+            if key not in into and len(into) >= MAX_STATE_KEYS:
+                continue
             into[key] = value
 
 
@@ -647,7 +712,7 @@ def watch(host, serial, code, fingerprint):
                             last = ""      # redraw with the name in place
                     if "print" not in report:
                         continue
-                    merge(state, report["print"])
+                    merge(state, clamp(report["print"]))
                     current = snapshot(state)
                     current["model"] = model
                     current["ams"]["humidity"] = humidity_of(state)
@@ -891,7 +956,7 @@ def command(mode, host, serial, code, fingerprint):
                     continue
                 if "print" not in report:
                     continue
-                merge(state, report["print"])
+                merge(state, clamp(report["print"]))
                 if acted(mode, state):
                     emit({"ok": True})
                     return 0

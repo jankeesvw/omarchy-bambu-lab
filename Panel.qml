@@ -553,6 +553,15 @@ Panel {
             // Each frame is its own file, so nothing is gained by keeping the
             // old ones decoded and a panel left open would grow without it.
             cache: false
+            // The watcher refuses a frame over 8 MB, but that is the size on
+            // the wire and JPEG does not compress in proportion to what it
+            // costs to decode: a picture of one flat colour can be enormous in
+            // pixels and tiny in bytes, and Qt would allocate four bytes for
+            // every one of those pixels. This caps what is decoded rather than
+            // what is delivered. The chamber camera is 1080p, so nothing real
+            // is being thrown away.
+            sourceSize.width: 1920
+            sourceSize.height: 1080
           }
 
           // What stands in for the picture. Faint on purpose: it is a space
