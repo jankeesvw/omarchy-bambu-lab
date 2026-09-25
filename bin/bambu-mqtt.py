@@ -12,11 +12,13 @@ types out of the fourteen in the spec -- CONNECT, SUBSCRIBE, PUBLISH, PINGREQ
 -- and asking every user of the plugin to install a package to send those is a
 worse trade than writing them out.
 
-Three modes:
+Four modes:
 
     MODE=watch      hold the connection open, print NDJSON state to stdout
     MODE=camera     hold the chamber camera open, write JPEG frames to the
                     cache directory and print the path of each one
+    MODE=video      the same, for printers that send RTSP video instead of
+                    stills (X1, H2, P2, X2): mpv decodes it into frames
     MODE=stop|pause|resume|light-on|light-off
                     connect, send the one command, print {"ok":true}, exit
 
@@ -44,6 +46,13 @@ MQTT_PORT = 8883
 # The chamber camera. A separate protocol on a separate port, but behind the
 # same certificate, so the same pin covers both.
 CAMERA_PORT = 6000
+# The X1, H2, P2 and X2 families send RTSP video instead, once LAN Mode Liveview
+# is on, on this port and behind the same certificate again.
+VIDEO_PORT = 322
+# Frames a second and width taken from the video. Two a second matches what the
+# P1 stills give the panel, and 960 is twice the panel at its widest.
+VIDEO_FPS = 2
+VIDEO_WIDTH = 960
 
 # Printers live on DHCP leases, so the address in the settings is a guess about
 # who is listening and not a statement about who they are. The pin is what
@@ -836,6 +845,128 @@ def camera(host, code, fingerprint, cache):
         backoff = min(BACKOFF_MAX, backoff * 2)
 
 
+def camera_video(host, code, fingerprint, cache):
+    """The camera, for printers that send RTSP video instead of stills.
+
+    RTSP over TLS, with H.264 inside, is not something to write on the standard
+    library, so mpv (which Omarchy ships) does the decoding and hands back a
+    couple of JPEG frames a second on stdout. From there it is the same as the
+    stills: whole pictures only, written round-robin into the cache.
+
+    The access code still never reaches a command line. The certificate on the
+    video port is checked against the pin first, as for every other connection,
+    and only then does mpv get the stream address, from a 0600 playlist file in
+    the checked cache directory that is removed once mpv has read it. mpv makes
+    its own connection a moment later without a pin of its own; the check just
+    before it is what stands in for one.
+    """
+    import select
+    import shutil
+    import signal
+    import subprocess
+    import tempfile
+
+    player = shutil.which("mpv")
+    if not player:
+        emit({"type": "camera", "ok": False, "fatal": True,
+              "error": "This printer sends video, which needs mpv to read."})
+        return 1
+
+    # The panel stops the camera by terminating us; make that unwind through
+    # the finally below so mpv goes too, rather than streaming on unseen.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+
+    def die_with_parent():
+        try:
+            import ctypes
+            ctypes.CDLL("libc.so.6").prctl(1, signal.SIGTERM)   # PR_SET_PDEATHSIG
+        except OSError:
+            pass
+
+    slot = 0
+    backoff = 1
+    while True:
+        try:
+            connect_tls(host, VIDEO_PORT, fingerprint).close()
+        except Untrusted as e:
+            emit({"type": "camera", "ok": False, "fatal": True,
+                  "error": "This is not the printer you trusted. Run: bambu trust",
+                  "fingerprint": e.seen})
+            return 1
+        except (OSError, ssl.SSLError):
+            # Port 322 is closed until LAN Mode Liveview is on.
+            emit({"type": "camera", "ok": False, "error": "no camera"})
+            time.sleep(backoff)
+            backoff = min(BACKOFF_MAX, backoff * 2)
+            continue
+
+        handle, playlist = tempfile.mkstemp(dir=cache, prefix="video-", suffix=".m3u")
+        with os.fdopen(handle, "w") as f:
+            f.write("rtsps://bblp:%s@%s:%d/streaming/live/1\n" % (code, host, VIDEO_PORT))
+        proc = subprocess.Popen(
+            [player, "--playlist=" + playlist, "--rtsp-transport=tcp", "--no-audio",
+             "--no-terminal", "--msg-level=all=no", "--no-config",
+             "--vf=fps=%d,scale=%d:-2:out_range=full,format=yuvj420p" % (VIDEO_FPS, VIDEO_WIDTH),
+             "--o=-", "--of=image2pipe", "--ovc=mjpeg", "--ovcopts=qmin=2,qmax=6"],
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            preexec_fn=die_with_parent)
+
+        backoff = 1
+        buf = b""
+        seen_any = False
+        try:
+            while True:
+                ready, _, _ = select.select([proc.stdout], [], [], 20)
+                if not ready:
+                    raise Dropped("the camera went quiet")
+                chunk = os.read(proc.stdout.fileno(), 262144)
+                if not chunk:
+                    raise Dropped("the camera closed the connection")
+                buf += chunk
+                # Frames arrive back to back; each runs from its start-of-image
+                # marker to its end-of-image marker (inside the picture data a
+                # 0xFF is always escaped, so the end marker cannot appear early).
+                while True:
+                    start = buf.find(b"\xff\xd8\xff")
+                    if start < 0:
+                        buf = buf[-2:]
+                        break
+                    end = buf.find(b"\xff\xd9", start + 3)
+                    if end < 0:
+                        buf = buf[start:]
+                        if len(buf) > 8_000_000:
+                            raise Dropped("the camera sent a frame we cannot read")
+                        break
+                    frame = buf[start:end + 2]
+                    buf = buf[end + 2:]
+                    path = write_frame(cache, slot, frame)
+                    slot = (slot + 1) % FRAME_SLOTS
+                    if path:
+                        if not seen_any:
+                            seen_any = True
+                            _unlink(playlist)
+                            emit({"type": "camera", "ok": True})
+                        emit({"type": "frame", "path": path})
+        except (Dropped, OSError):
+            emit({"type": "camera", "ok": False, "error": "the camera stopped"})
+        finally:
+            _unlink(playlist)
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+        time.sleep(backoff)
+
+
+def _unlink(path):
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
 def write_frame(cache, slot, data):
     """Write one frame, through a rename so the panel never reads a half file.
 
@@ -983,6 +1114,8 @@ def main():
         return watch(host, serial, code, fingerprint)
     if mode == "camera":
         return camera(host, code, fingerprint, env("BAMBU_CACHE"))
+    if mode == "video":
+        return camera_video(host, code, fingerprint, env("BAMBU_CACHE"))
     if mode in COMMANDS:
         return command(mode, host, serial, code, fingerprint)
     sys.exit("bambu-mqtt: unknown mode %r" % mode)

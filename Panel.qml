@@ -117,16 +117,10 @@ Panel {
   readonly property string model: state && state.model ? state.model : ""
   readonly property string title: model !== "" ? model : "Bambu Lab"
 
-  // Which printers this camera works on. The port-6000 still image is what the
-  // P1 and A1 families offer; an X1, H2 or P2 serves RTSP instead, which is a
-  // different thing to build and is not built. Rather than pointing a
-  // connection at a port that will not answer, those models are told plainly.
-  readonly property bool cameraCapable: {
-    if (model === "") return true            // unknown: try, and find out
-    var name = model.toUpperCase()
-    if (/\b(X1|H2|P2|X2)/.test(name)) return false
-    return true
-  }
+  // Which camera the printer has. The port-6000 still image is what the P1 and
+  // A1 families offer; an X1, H2, P2 or X2 serves RTSP video instead, which
+  // `bambu video` reads (through mpv) once LAN Mode Liveview is on.
+  readonly property bool cameraIsVideo: /\b(X1|H2|P2|X2)/.test(model.toUpperCase())
 
   // The mark wears the bar's own colour. Tinting it with the running filament
   // was tried and dropped: a bar is a row of theme-coloured glyphs, and one
@@ -234,8 +228,8 @@ Panel {
   // a panel that is shut.
   Process {
     id: cameraProc
-    running: root.opened && root.showCamera && root.connected && root.cameraCapable
-    command: root.cmd(["camera"])
+    running: root.opened && root.showCamera && root.connected
+    command: root.cmd([root.cameraIsVideo ? "video" : "camera"])
     stdout: SplitParser {
       onRead: function(line) {
         var message
@@ -620,12 +614,16 @@ Panel {
               Layout.fillWidth: true
               horizontalAlignment: Text.AlignHCenter
               wrapMode: Text.WordWrap
-              text: !root.cameraCapable
-                    ? "This printer sends video rather than stills, which this does not read yet."
-                    : root.cameraDemo
-                      ? "Camera"
+              // The two ordinary failures both mean the printer is not sending
+              // pictures, which is nearly always LAN Mode Liveview being off.
+              // Anything else (mpv missing, a printer that is not the pinned
+              // one) is said as it is.
+              text: root.cameraDemo
+                    ? "Camera"
+                    : root.cameraError === "no camera" || root.cameraError === "the camera stopped"
+                      ? "No camera. Turn on LAN Mode Liveview on the printer."
                       : root.cameraError !== ""
-                        ? "No camera. Turn on LAN Mode Liveview on the printer."
+                        ? root.cameraError
                         : "Looking for the camera…"
               font.family: root.fontFamily
               font.pixelSize: Style.font.bodySmall
