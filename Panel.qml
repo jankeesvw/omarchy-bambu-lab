@@ -543,25 +543,59 @@ Panel {
           color: Util.alpha(root.foreground, 0.05)
           clip: true
 
-          Image {
+          // Two pictures taking turns. A new frame decodes in the one that is
+          // hidden and only replaces the one on screen once it is ready: with a
+          // single asynchronous Image, every new source blanks it until the
+          // decode finishes, which reads as a flicker on every frame.
+          Item {
             id: chamber
             anchors.fill: parent
             visible: root.frame !== ""
-            source: root.frame !== "" ? "file://" + root.frame : ""
-            fillMode: Image.PreserveAspectCrop
-            asynchronous: true
-            // Each frame is its own file, so nothing is gained by keeping the
-            // old ones decoded and a panel left open would grow without it.
-            cache: false
-            // The watcher refuses a frame over 8 MB, but that is the size on
-            // the wire and JPEG does not compress in proportion to what it
-            // costs to decode: a picture of one flat colour can be enormous in
-            // pixels and tiny in bytes, and Qt would allocate four bytes for
-            // every one of those pixels. This caps what is decoded rather than
-            // what is delivered. The chamber camera is 1080p, so nothing real
-            // is being thrown away.
-            sourceSize.width: 1920
-            sourceSize.height: 1080
+            property int shown: 0
+
+            function load(path) {
+              var back = shown === 0 ? frameB : frameA
+              back.source = path !== "" ? "file://" + path : ""
+            }
+
+            Connections {
+              target: root
+              function onFrameChanged() { chamber.load(root.frame) }
+            }
+            Component.onCompleted: load(root.frame)
+
+            Image {
+              id: frameA
+              anchors.fill: parent
+              visible: chamber.shown === 0
+              onStatusChanged: if (status === Image.Ready) chamber.shown = 0
+              fillMode: Image.PreserveAspectCrop
+              asynchronous: true
+              // Each frame is its own file, so nothing is gained by keeping the
+              // old ones decoded and a panel left open would grow without it.
+              cache: false
+              // The watcher refuses a frame over 8 MB, but that is the size on
+              // the wire and JPEG does not compress in proportion to what it
+              // costs to decode: a picture of one flat colour can be enormous in
+              // pixels and tiny in bytes, and Qt would allocate four bytes for
+              // every one of those pixels. This caps what is decoded rather than
+              // what is delivered. The chamber camera is 1080p, so nothing real
+              // is being thrown away.
+              sourceSize.width: 1920
+              sourceSize.height: 1080
+            }
+
+            Image {
+              id: frameB
+              anchors.fill: parent
+              visible: chamber.shown === 1
+              onStatusChanged: if (status === Image.Ready) chamber.shown = 1
+              fillMode: Image.PreserveAspectCrop
+              asynchronous: true
+              cache: false
+              sourceSize.width: 1920
+              sourceSize.height: 1080
+            }
           }
 
           // What stands in for the picture. Faint on purpose: it is a space
