@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Layouts
 import qs.Commons
 
+import qs.Commons as Commons
 // The panel with the printer taken out of it: the same blocks in the same
 // order, drawn as empty shapes.
 //
@@ -19,7 +20,7 @@ import qs.Commons
 ColumnLayout {
   id: root
 
-  property color foreground: Color.foreground
+  property color foreground: Commons.Color.foreground
   property string fontFamily: Style.font.family
   property string message: ""
   property int pad: Style.space(12)

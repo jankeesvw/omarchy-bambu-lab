@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "jankeesvw.bambu-lab",
   "name": "Bambu Lab",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": "Jankees van Woezik",
   "description": "Your Bambu Lab printer in the bar: the print, the temperatures, the AMS spools, and a stop button",
   "homepage": "https://github.com/jankeesvw/omarchy-bambu",

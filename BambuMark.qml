@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Shapes
 import qs.Commons
 
+import qs.Commons as Commons
 // The Bambu Lab mark, drawn rather than typed.
 //
 // The path is Simple Icons' bambulab, which is CC0, on their 24×24 grid;
@@ -17,7 +18,7 @@ Item {
   id: root
 
   property real iconSize: Style.font.icon
-  property color color: Color.foreground
+  property color color: Commons.Color.foreground
 
   implicitWidth: iconSize
   implicitHeight: iconSize

@@ -1,6 +1,7 @@
 import QtQuick
 import qs.Commons
 
+import qs.Commons as Commons
 // A spool of filament, seen end on: the filament as a ring, the hub as the
 // hole through the middle, sitting on the round holder it clips into.
 //
@@ -26,10 +27,10 @@ Item {
   // The colour of the filament. Two of them is a spool wound with two, which
   // is what the printer reports for the gradient filaments.
   property var filament: []
-  property color stroke: Color.foreground
+  property color stroke: Commons.Color.foreground
   // Painted in the hub and behind the ring, so an empty spool reads as empty
   // rather than as one loaded with whatever the panel is sitting on.
-  property color behind: Color.background
+  property color behind: Commons.Color.background
   // The holder the spool sits in. Drawn only where there is room for it.
   property bool holder: false
 

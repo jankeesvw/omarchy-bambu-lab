@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Layouts
 import Quickshell.Io
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 // A Bambu Lab printer in the bar: a spool that takes the colour of whatever is
@@ -64,7 +65,7 @@ Panel {
   readonly property int labelGap: Style.space(6)
   readonly property int pad: Style.space(12)
 
-  readonly property color foreground: bar ? bar.foreground : Color.foreground
+  readonly property color foreground: bar ? bar.foreground : Commons.Color.foreground
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
   // Everything the printer told us, as `bin/bambu` hands it over. Replaced
@@ -133,7 +134,7 @@ Panel {
   // item in an arbitrary colour reads as a rogue element rather than as
   // information. Which filament is running is a question the panel answers.
   readonly property color markColor:
-    alert ? (bar ? bar.urgent : Color.urgent) : foreground
+    alert ? (bar ? bar.urgent : Commons.Color.urgent) : foreground
 
   readonly property bool needsSetup: setupStage !== ""
   // Set up, but the printer is not answering: a switched-off printer, which is
@@ -633,7 +634,7 @@ Panel {
                 colors: root.showExternal ? root.state.external.colors : []
                 active: false
                 foreground: root.foreground
-                background: Color.popups.background
+                background: Commons.Color.popups.background
                 fontFamily: root.fontFamily
               }
             }
@@ -688,7 +689,7 @@ Panel {
                     colors: modelData.colors
                     active: modelData.active
                     foreground: root.foreground
-                    background: Color.popups.background
+                    background: Commons.Color.popups.background
                     fontFamily: root.fontFamily
                   }
                 }
@@ -725,7 +726,7 @@ Panel {
             icon: root.iconLight
             text: root.state && root.state.light_on ? "On" : "Off"
             iconColor: root.state && root.state.light_on
-                       ? Color.accent : Util.alpha(root.foreground, 0.5)
+                       ? Commons.Color.accent : Util.alpha(root.foreground, 0.5)
             foreground: root.foreground
             fontFamily: root.fontFamily
             interactive: !root.commandBusy
@@ -737,7 +738,7 @@ Panel {
             icon: root.hasError ? root.iconWarn : root.iconOk
             text: root.hasError
                   ? (root.errors.length > 0 ? root.errors[0].severity : "Error") : "OK"
-            iconColor: root.hasError ? Color.urgent : Util.alpha(root.foreground, 0.6)
+            iconColor: root.hasError ? Commons.Color.urgent : Util.alpha(root.foreground, 0.6)
             foreground: root.foreground
             fontFamily: root.fontFamily
             interactive: root.errors.length > 0
@@ -832,7 +833,7 @@ Panel {
             width: parent.width * (root.state ? root.state.percent / 100 : 0)
             height: parent.height
             radius: height / 2
-            color: root.paused ? Util.alpha(Color.accent, 0.5) : Color.accent
+            color: root.paused ? Util.alpha(Commons.Color.accent, 0.5) : Commons.Color.accent
             Behavior on width { NumberAnimation { duration: 300; easing.type: Easing.OutCubic } }
           }
         }
@@ -883,7 +884,7 @@ Panel {
           font.family: root.fontFamily
           font.pixelSize: Style.font.bodySmall
           color: root.setupError !== "" || root.commandError !== ""
-                 ? Color.urgent : Util.alpha(root.foreground, 0.6)
+                 ? Commons.Color.urgent : Util.alpha(root.foreground, 0.6)
         }
       }
 
@@ -898,7 +899,7 @@ Panel {
         opened: root.stopPending
         message: "Stop this print? It cannot be resumed."
         confirmText: "Stop"
-        background: Color.popups.background
+        background: Commons.Color.popups.background
         foreground: root.foreground
         fontFamily: root.fontFamily
         onCanceled: root.cancelStop()

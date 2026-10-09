@@ -3,6 +3,7 @@ import QtQuick.Layouts
 import Quickshell.Io
 import qs.Commons
 
+import qs.Commons as Commons
 // One step of the first run: a number, what to do, and where useful the exact
 // command, which copies itself when you click it.
 //
@@ -17,7 +18,7 @@ Item {
   property string body: ""
   property string code: ""
   property bool done: false
-  property color foreground: Color.foreground
+  property color foreground: Commons.Color.foreground
   property string fontFamily: Style.font.family
 
   readonly property string iconDone: "\uf00c"
@@ -35,7 +36,7 @@ Item {
       width: Style.space(22)
       height: width
       radius: width / 2
-      color: root.done ? "transparent" : Util.alpha(Color.accent, 0.15)
+      color: root.done ? "transparent" : Util.alpha(Commons.Color.accent, 0.15)
       border.width: root.done ? 1 : 0
       border.color: Util.alpha(root.foreground, 0.25)
       antialiasing: true
@@ -46,7 +47,7 @@ Item {
         text: root.done ? root.iconDone : root.number
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
-        color: root.done ? Util.alpha(root.foreground, 0.4) : Color.accent
+        color: root.done ? Util.alpha(root.foreground, 0.4) : Commons.Color.accent
       }
     }
 
@@ -106,7 +107,7 @@ Item {
           text: copied.running ? "copied" : ""
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
-          color: Color.accent
+          color: Commons.Color.accent
         }
 
         MouseArea {

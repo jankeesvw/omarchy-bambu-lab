@@ -1,6 +1,7 @@
 import QtQuick
 import qs.Commons
 
+import qs.Commons as Commons
 // A rounded pill with a glyph and a value in it. The panel is mostly rows of
 // these: a printer has a dozen small facts and a pill each keeps them from
 // running together into a paragraph.
@@ -9,8 +10,8 @@ Item {
 
   property string icon: ""
   property string text: ""
-  property color iconColor: Color.foreground
-  property color foreground: Color.foreground
+  property color iconColor: Commons.Color.foreground
+  property color foreground: Commons.Color.foreground
   property string fontFamily: Style.font.family
   property bool interactive: false
   // Drawn when the keyboard cursor is on this chip, matching the ring the

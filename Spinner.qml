@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Shapes
 import qs.Commons
 
+import qs.Commons as Commons
 // A ring with a gap in it, turning.
 //
 // Drawn rather than animated as a strip of glyphs, so it stays smooth at any
@@ -13,8 +14,8 @@ Item {
   id: root
 
   property real size: Style.space(28)
-  property color color: Color.accent
-  property color track: Util.alpha(Color.foreground, 0.12)
+  property color color: Commons.Color.accent
+  property color track: Util.alpha(Commons.Color.foreground, 0.12)
   property int period: 1100
   // Stops when it is not on screen. An animation left running behind a closed
   // panel is a wakeup a few times a second for nobody.

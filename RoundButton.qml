@@ -1,6 +1,7 @@
 import QtQuick
 import qs.Commons
 
+import qs.Commons as Commons
 // One of the three controls in the panel header: stop, pause, resume.
 //
 // Round and unlabelled, the way the printer's own app draws them. They are
@@ -10,7 +11,7 @@ Item {
   id: root
 
   property string icon: ""
-  property color foreground: Color.foreground
+  property color foreground: Commons.Color.foreground
   property string fontFamily: Style.font.family
   property bool danger: false
   property bool enabled: true
@@ -18,7 +19,7 @@ Item {
 
   signal activated()
 
-  readonly property color tint: danger ? Color.urgent : foreground
+  readonly property color tint: danger ? Commons.Color.urgent : foreground
 
   implicitWidth: Style.space(30)
   implicitHeight: Style.space(30)

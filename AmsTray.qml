@@ -1,6 +1,7 @@
 import QtQuick
 import qs.Commons
 
+import qs.Commons as Commons
 // One slot: the spool, and what is on it.
 //
 // The label runs to two lines rather than being cut off. "Bambu PETG Basic"
@@ -14,8 +15,8 @@ Item {
   property string label: ""
   property var colors: []
   property bool active: false
-  property color foreground: Color.foreground
-  property color background: Color.background
+  property color foreground: Commons.Color.foreground
+  property color background: Commons.Color.background
   property string fontFamily: Style.font.family
   property real spoolSize: Style.space(38)
 
@@ -51,7 +52,7 @@ Item {
         color: "transparent"
         visible: root.active
         border.width: Math.max(1, Style.space(2))
-        border.color: Color.accent
+        border.color: Commons.Color.accent
         antialiasing: true
       }
     }
@@ -66,7 +67,7 @@ Item {
       text: root.present ? root.label : "empty"
       font.family: root.fontFamily
       font.pixelSize: Style.font.caption
-      color: root.active ? Color.accent
+      color: root.active ? Commons.Color.accent
                          : Util.alpha(root.foreground, root.present ? 0.75 : 0.35)
     }
   }
