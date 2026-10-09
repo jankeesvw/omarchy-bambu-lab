@@ -5,7 +5,7 @@
   "version": "1.0.1",
   "author": "Jankees van Woezik",
   "description": "Your Bambu Lab printer in the bar: the print, the temperatures, the AMS spools, and a stop button",
-  "homepage": "https://github.com/jankeesvw/omarchy-bambu",
+  "homepage": "https://github.com/jankeesvw/omarchy-bambu-lab",
   "license": "MIT",
   "kinds": [
     "bar-widget"
