@@ -163,7 +163,7 @@ Panel {
       number: "3",
       title: "Save the access code",
       body: "In a file only you can read.",
-      code: "printf %s YOURCODE > ~/.config/omarchy-bambu/access-code",
+      code: "printf %s YOURCODE > ~/.config/omarchy-bambu-lab/access-code",
       done: false,
     },
   ]
