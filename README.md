@@ -108,7 +108,7 @@ Built and tested against a **P1S**.
 
 **Watching works on all of them.** The MQTT protocol, covering state, AMS, temperatures and progress, is shared across the X1, P1, A1 and H2 families, and the printer names itself, so the panel says which one it is rather than guessing.
 
-**The camera works on the P1 and A1 families.** Those serve stills on port 6000, which is what this reads. An X1, H2 or P2 serves RTSP video instead, which this does not read; those printers are told so in place of a picture.
+**The camera works on all of them, in two ways.** The P1 and A1 families serve stills on port 6000, which this reads directly. The X1, H2, P2 and X2 families serve RTSP video on port 322 instead, which `mpv` decodes into a couple of frames a second for the panel. Omarchy ships `mpv`; nothing else is needed. The video only exists once **LAN Mode Liveview** is on, which is a separate switch from LAN Only Mode: the printer stays on Bambu's cloud. As with every other connection, the certificate on port 322 is checked against the pin before the access code is used, and the code reaches `mpv` through a private file rather than its command line. Tested on an **X2D**.
 
 **The buttons are the other way round.** The cloud-blocks-local-control behaviour above is P1-only, so an X1 or an A1 should take stop, pause and resume without being put in LAN Only mode.
 
@@ -132,6 +132,7 @@ Right-click the bar and choose Configure, or edit `~/.config/omarchy/shell.json`
 bambu status                 # what is set up and what is missing
 bambu watch                  # printer state as JSON, a line per change
 bambu camera                 # chamber frames; prints the path of each
+bambu video                  # the same, from printers that send RTSP video
 bambu pause | resume | stop
 bambu light on | off
 bambu demo on | off          # fixed data for screenshots; commands do nothing
@@ -157,7 +158,7 @@ That reads two local files and nothing else, so it answers straight away whether
 
 **This is not the printer you trusted.** Something else is answering on that address, usually because the printer took a new DHCP lease and another device took its old one. Check the address on the printer screen, then run `bambu trust --host <new address>` and confirm the serial matches.
 
-**The camera stays empty.** LAN Mode Liveview is off at the printer, or the printer is an X1, H2 or P2, which serve video rather than stills.
+**The camera stays empty.** LAN Mode Liveview is off at the printer. On an X1, H2, P2 or X2 the video also needs `mpv`; the panel says so if it is missing.
 
 **A button did nothing.** See LAN Only mode, above.
 

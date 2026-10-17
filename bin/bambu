@@ -4,6 +4,7 @@
 #   bambu trust --host <address>   pin the printer's certificate; run once
 #   bambu watch                    stream printer state as NDJSON, a line per change
 #   bambu camera                   stream chamber camera frames; prints each path
+#   bambu video                    the same, from printers that send RTSP video (X1, H2, P2, X2)
 #   bambu stop | pause | resume    control a running print
 #   bambu light on | off           the chamber light
 #   bambu demo on | off            fixed state for screenshots; commands become no-ops
@@ -320,7 +321,7 @@ case "${1:-status}" in
     private_dir "$CONFIG_DIR" || report '"The config directory is not one of ours."'
     run_mqtt watch
     ;;
-  camera)
+  camera|video)
     # Nothing to pose with in demo mode: a still of somebody else's printer
     # would be somebody else's printer, and a fake one would look fake.
     if demo_on; then
@@ -334,7 +335,7 @@ case "${1:-status}" in
     fi
     private_dir "$CONFIG_DIR" || report '"The config directory is not one of ours."'
     private_dir "$CACHE_DIR" || report '"The cache directory is not one of ours."'
-    run_mqtt camera
+    run_mqtt "$1"
     ;;
   stop|pause|resume)
     # Every command is a no-op while the demo is posing, so a click during a
