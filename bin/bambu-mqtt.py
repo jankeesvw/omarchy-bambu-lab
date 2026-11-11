@@ -494,12 +494,11 @@ def hms_code(entry):
 HMS_SEVERITY = {1: "fatal", 2: "serious", 3: "common", 4: "info"}
 
 
-def trays_of(unit, present_bits, unit_index):
+def trays_of(unit, nibble):
     """The four slots of one AMS, in slot order.
 
-    Which slots are loaded is not on the unit but on the group above it: one
-    bitmask covering every AMS at once, four bits each. So the bit for a slot
-    is found by counting past the units before it.
+    Which slots are loaded is not on the unit but on the group above it, so
+    the caller hands over the four bits that belong to this unit.
     """
     out = []
     for entry in unit.get("tray", []):
@@ -516,7 +515,7 @@ def trays_of(unit, present_bits, unit_index):
             "slot": slot,
             # The bitmask is the printer's own answer to what is loaded; a
             # slot can carry a remembered colour long after the spool is out.
-            "present": bool(present_bits >> (unit_index * 4 + slot) & 1) and bool(kind),
+            "present": bool(nibble >> slot & 1) and bool(kind),
             "label": brand or kind or "empty",
             "colors": colours,
             "temp_min": number(entry.get("nozzle_temp_min")),
@@ -561,8 +560,25 @@ def snapshot(state):
     present_bits = bits(ams.get("tray_exist_bits", "0"))
     trays = []
     for index, unit in enumerate(units):
-        for tray in trays_of(unit, present_bits, index):
-            tray["ams"] = number(unit.get("id"), index)
+        # One bitmask covering every AMS at once, four bits each, so the bits
+        # for a unit are found by counting past the units before it.
+        nibble = present_bits >> (index * 4) & 0xF
+        # Except on the A2L, whose AMS lite calls itself unit 16 and reports
+        # its four bits further up the mask -- measured as tray_exist_bits
+        # "f000000" with all four slots loaded. Counting by position then
+        # finds nothing and every spool is drawn as an empty holder. With a
+        # single unit there is nobody else those bits could belong to, so the
+        # one nibble that is set is this unit's.
+        if not nibble and len(units) == 1 and present_bits:
+            shifted = present_bits
+            while shifted and not shifted & 0xF:
+                shifted >>= 4
+            nibble = shifted & 0xF
+        for tray in trays_of(unit, nibble):
+            # By position rather than by the id the unit reports: tray_now
+            # counts units by position, and the A2L's unit 16 would otherwise
+            # never match it, leaving no spool ringed as the active one.
+            tray["ams"] = index
             trays.append(tray)
 
     # tray_now indexes across every AMS at once: the top bits pick the unit and
