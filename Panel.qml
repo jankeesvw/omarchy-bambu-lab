@@ -68,73 +68,81 @@ Panel {
   readonly property color foreground: bar ? bar.foreground : Commons.Color.foreground
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
-  // Everything the printer told us, as `bin/bambu` hands it over. Replaced
-  // wholesale on every line rather than patched: the script has already done
-  // the accumulating, so this is always a complete picture.
-  property var state: null
-  property bool connected: false
-  // Set when the trouble is ours rather than the printer's -- no access code,
-  // nothing pinned, the wrong certificate. Those want reading, not retrying.
-  property string setupError: ""
-  // Which part of the first run is still outstanding, if any. Kept apart from
-  // setupError because an install that has not been pointed at a printer yet
-  // is not a fault, and should not be shown in the colour of one.
-  property string setupStage: ""
-  // What went wrong with the last button press, shown until the next one.
-  property string commandError: ""
-  // Blocks a second press while a command is in flight and for a moment after,
-  // because the printer answers a stop with silence for a second or two and a
-  // second stop in that gap is a stop sent to a printer that already stopped.
-  property bool commandBusy: false
-  // A print that finished, kept lit for a while so one that ended while you
-  // were downstairs is still announced when you get back.
-  property bool celebrating: false
+  // The printers live in Service.qml, once for the whole shell rather than
+  // once per monitor: a Bambu printer hands out three MQTT connections, and a
+  // copy of this panel per screen used to take every one of them.
+  readonly property var service: bar && bar.shell && typeof bar.shell.serviceFor === "function"
+    ? bar.shell.serviceFor("jankeesvw.bambu-lab") : null
+  readonly property var printers: service ? service.printers : []
+  readonly property int selected: service ? service.selected : 0
+  readonly property var cur: printers.length > 0
+                             ? printers[Math.min(selected, printers.length - 1)] : null
 
-  // The newest camera frame on disk, and whether the camera is answering at
-  // all. Frames arrive as whole files with a fresh name each time: Qt caches an
-  // image by its URL, so a file rewritten in place would keep showing the
-  // first frame it ever read.
-  property string frame: ""
-  property bool cameraOk: false
-  property string cameraError: ""
-  // The demo has no camera to pose with: a still of the author's own printer
-  // is the author's own printer, and an invented one looks invented.
-  property bool cameraDemo: false
+  // Settings reach the service from here; every monitor's copy holds the same.
+  function pushSettings() {
+    if (!service) return
+    service.host = root.host
+    service.showCamera = root.showCamera
+    service.finishHoldMin = root.finishHoldMin
+    service.notifyOnFinish = root.notifyOnFinish
+    service.notifyOnError = root.notifyOnError
+  }
+  onServiceChanged: pushSettings()
+  onHostChanged: pushSettings()
+  onShowCameraChanged: pushSettings()
+  onFinishHoldMinChanged: pushSettings()
+  onNotifyOnFinishChanged: pushSettings()
+  onNotifyOnErrorChanged: pushSettings()
+  Component.onCompleted: pushSettings()
+  Component.onDestruction: if (opened && service) service.openPanels = Math.max(0, service.openPanels - 1)
 
-  readonly property string gcodeState: state ? state.gcode_state : ""
-  readonly property bool printing: gcodeState === "RUNNING" || gcodeState === "PREPARE"
-  readonly property bool paused: gcodeState === "PAUSE"
-  readonly property bool failed: gcodeState === "FAILED"
-  readonly property bool finished: gcodeState === "FINISH"
-  readonly property bool busy: printing || paused
+  function selectPrinter(i) {
+    if (i < 0 || i >= printers.length || i === selected) return
+    stopPending = false
+    service.selected = i
+    if (printers[i]) {
+      printers[i].commandError = ""
+      printers[i].celebrating = false
+    }
+    cursor = firstEnabled()
+  }
 
-  readonly property var errors: state && state.errors ? state.errors : []
-  readonly property bool hasError: failed || errors.length > 0
-                                   || (state ? state.print_error !== 0 : false)
+  // The selected printer, under the names the panel below was written against.
+  readonly property var state: cur ? cur.state : null
+  readonly property bool connected: cur ? cur.connected : false
+  readonly property string setupError: cur ? cur.setupError : ""
+  readonly property string setupStage: cur ? cur.setupStage : ""
+  readonly property string commandError: cur ? cur.commandError : ""
+  readonly property bool commandBusy: cur ? cur.commandBusy : false
+  readonly property string frame: cur ? cur.frame : ""
+  readonly property bool cameraOk: cur ? cur.cameraOk : false
+  readonly property string cameraError: cur ? cur.cameraError : ""
+  readonly property bool cameraDemo: cur ? cur.cameraDemo : false
+  readonly property string gcodeState: cur ? cur.gcodeState : ""
+  readonly property bool printing: cur ? cur.printing : false
+  readonly property bool paused: cur ? cur.paused : false
+  readonly property bool failed: cur ? cur.failed : false
+  readonly property bool finished: cur ? cur.finished : false
+  readonly property bool busy: cur ? cur.busy : false
+  readonly property var errors: cur ? cur.errors : []
+  readonly property bool hasError: cur ? cur.hasError : false
+  readonly property bool cameraCapable: cur ? cur.cameraCapable : true
 
   readonly property var trays: state && state.ams ? state.ams.trays : []
-  // What the printer calls itself, when it says. Older firmware does not, and
-  // then the make alone is a truer label than a guess.
   readonly property string model: state && state.model ? state.model : ""
-  readonly property string title: model !== "" ? model : "Bambu Lab"
+  readonly property string title: model !== "" ? model : (cur ? cur.name : "Bambu Lab")
 
-  // Which printers this camera works on. The port-6000 still image is what the
-  // P1 and A1 families offer; an X1, H2 or P2 serves RTSP instead, which is a
-  // different thing to build and is not built. Rather than pointing a
-  // connection at a port that will not answer, those models are told plainly.
-  readonly property bool cameraCapable: {
-    if (model === "") return true            // unknown: try, and find out
-    var name = model.toUpperCase()
-    if (/\b(X1|H2|P2|X2)/.test(name)) return false
-    return true
-  }
+  // Every printer at once, for the mark in the bar.
+  readonly property bool anyConnected: printers.some(function(p) { return p.connected })
+  readonly property bool anyBusy: printers.some(function(p) { return p.busy })
+  readonly property bool anyAlert: printers.some(function(p) { return p.alert })
 
   // The mark wears the bar's own colour. Tinting it with the running filament
   // was tried and dropped: a bar is a row of theme-coloured glyphs, and one
   // item in an arbitrary colour reads as a rogue element rather than as
   // information. Which filament is running is a question the panel answers.
   readonly property color markColor:
-    alert ? (bar ? bar.urgent : Commons.Color.urgent) : foreground
+    anyAlert ? (bar ? bar.urgent : Commons.Color.urgent) : foreground
 
   readonly property bool needsSetup: setupStage !== ""
   // Set up, but the printer is not answering: a switched-off printer, which is
@@ -156,14 +164,14 @@ Panel {
       number: "2",
       title: "Trust the printer",
       body: "Use the address the printer shows under Settings, WLAN.",
-      code: root.script + " trust --host 192.168.1.42",
+      code: root.script + (root.cur && root.cur.profile !== "" ? " --profile " + root.cur.profile : "") + " trust --host 192.168.1.42",
       done: root.setupStage === "no-code",
     },
     {
       number: "3",
       title: "Save the access code",
       body: "In a file only you can read.",
-      code: "printf %s YOURCODE > ~/.config/omarchy-bambu-lab/access-code",
+      code: "printf %s YOURCODE > ~/.config/omarchy-bambu-lab" + (root.cur && root.cur.profile !== "" ? "-" + root.cur.profile : "") + "/access-code",
       done: false,
     },
   ]
@@ -193,158 +201,24 @@ Panel {
     return (h < 10 ? "0" : "") + h + ":" + (m < 10 ? "0" : "") + m
   }
 
-  // ------------------------------------------------------------------ state
-
-  // Runs for as long as the shell does. The script reconnects on its own, so a
-  // printer switched off in the evening is picked up again in the morning
-  // without anything here noticing it went.
-  Process {
-    id: watchProc
-    running: true
-    command: root.cmd(["watch"])
-    stdout: SplitParser {
-      onRead: function(line) {
-        var message
-        try {
-          message = JSON.parse(line)
-        } catch (e) {
-          return
-        }
-
-        if (message.type === "status") {
-          root.connected = !!message.connected
-          root.setupStage = message.setup ? String(message.error || "") : ""
-          root.setupError = (message.fatal && !message.setup)
-                            ? String(message.error || "") : ""
-          if (!root.connected) root.state = null
-          return
-        }
-        if (message.type !== "state") return
-
-        var was = root.gcodeState
-        root.connected = true
-        root.setupError = ""
-        root.state = message
-        root.announce(was, message)
-      }
-    }
-  }
-
-  // Only while you are looking at it. A frame is about 65 kB and they arrive a
-  // couple of times a second, which is not something to be decoding all day for
-  // a panel that is shut.
-  Process {
-    id: cameraProc
-    running: root.opened && root.showCamera && root.connected && root.cameraCapable
-    command: root.cmd(["camera"])
-    stdout: SplitParser {
-      onRead: function(line) {
-        var message
-        try {
-          message = JSON.parse(line)
-        } catch (e) {
-          return
-        }
-        if (message.type === "frame") {
-          root.cameraOk = true
-          root.cameraError = ""
-          root.frame = String(message.path || "")
-          return
-        }
-        if (message.type === "camera") {
-          root.cameraOk = !!message.ok
-          root.cameraDemo = !!message.demo
-          root.cameraError = message.ok ? "" : String(message.error || "")
-        }
-      }
-    }
-  }
-
-  // A print that ends is the whole reason to have this in the bar, and it ends
-  // while you are somewhere else.
-  function announce(was, now) {
-    if (was === "" || was === now.gcode_state) return
-
-    if (now.gcode_state === "FINISH") {
-      if (root.finishHoldMin > 0) {
-        root.celebrating = true
-        celebrateTimer.restart()
-      }
-      if (root.notifyOnFinish) notify("Print finished", now.task)
-    }
-    if (now.gcode_state === "FAILED" && root.notifyOnError) {
-      notify("Print failed", now.task)
-    }
-    if (now.gcode_state === "RUNNING") root.celebrating = false
-  }
-
-  Timer {
-    id: celebrateTimer
-    interval: Math.max(1, root.finishHoldMin) * 60000
-    onTriggered: root.celebrating = false
-  }
-
-  Process { id: notifyProc }
-
-  function notify(title, task) {
-    // The task name is whatever was typed into the slicer, so it is kept out
-    // of anything that reads an argument as an option: the body always starts
-    // with a word of ours, which is what stops a file called "--help" from
-    // being read as one.
-    var body = title === "Print failed"
-      ? (task ? "Failed: " + root.plain(task) : "The print failed")
-      : (task ? "Finished: " + root.plain(task) : "The printer is done")
-    notifyProc.command = ["notify-send", "-a", "Bambu Lab", title, body]
-    notifyProc.running = true
-  }
-
-  // --------------------------------------------------------------- commands
-
-  // The address override rides on every call, so a setting changed in the
-  // panel takes effect on the next command rather than at the next login.
-  function cmd(args) {
-    var base = [root.script]
-    if (root.host !== "") base = base.concat(["--host", root.host])
-    return base.concat(args)
-  }
-
-  Process {
-    id: cmdProc
-    stdout: StdioCollector {
-      onStreamFinished: {
-        var answer
-        try {
-          answer = JSON.parse(text)
-        } catch (e) {
-          root.commandError = "the printer did not answer"
-          return
-        }
-        root.commandError = answer.ok ? "" : String(answer.error || "the printer refused it")
-      }
-    }
-  }
-
-  Timer {
-    id: cooldown
-    interval: 3000
-    onTriggered: root.commandBusy = false
-  }
-
-  function send(args) {
-    if (root.commandBusy) return
-    root.commandBusy = true
-    root.commandError = ""
-    cmdProc.command = root.cmd(args)
-    cmdProc.running = true
-    cooldown.restart()
-  }
+  function send(args) { if (cur) cur.send(args) }
 
   // ------------------------------------------------------------------- bar
 
-  readonly property bool alert: hasError || (celebrating && !busy)
-
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
+
+  function printerLine(p) {
+    if (p.setupError !== "" || p.setupStage !== "") return p.name + ": not set up"
+    if (!p.connected) return p.name + ": unreachable"
+    if (p.hasError) return p.name + ": needs you"
+    if (p.busy && p.state)
+      return p.name + ": " + root.plain((p.state.task || "Printing") + " · " + p.state.percent + "%"
+                        + (p.state.remaining_min > 0
+                           ? " · done " + root.finishTime(p.state.remaining_min) : ""))
+    if (p.finished) return p.name + ": finished"
+    return p.name + ": idle"
+  }
 
   BarIconButton {
     id: button
@@ -352,23 +226,10 @@ Panel {
     anchors.top: parent.top
     anchors.bottom: parent.bottom
     bar: root.bar
-    active: root.alert
-    // A printer sitting idle is not news. `dimmed` rather than opacity: the
-    // button animates its own opacity and a second binding on it fights the
-    // animation instead of replacing it.
-    dimmed: !root.connected || (!root.busy && !root.alert)
+    active: root.anyAlert
+    dimmed: !root.anyConnected || (!root.anyBusy && !root.anyAlert)
 
-    tooltipText: {
-      if (root.setupError !== "") return root.plain(root.setupError)
-      if (!root.connected) return "Printer unreachable"
-      if (root.hasError) return "The printer needs you"
-      if (root.busy && root.state)
-        return root.plain((root.state.task || "Printing") + " · " + root.state.percent + "%"
-                          + (root.state.remaining_min > 0
-                             ? " · done " + root.finishTime(root.state.remaining_min) : ""))
-      if (root.finished) return "Print finished"
-      return "Printer idle"
-    }
+    tooltipText: root.printers.map(root.printerLine).join("\n")
 
     onPressed: function(b) { root.toggle() }
 
@@ -422,7 +283,11 @@ Panel {
       onTabRequested: function(direction) { root.moveCursor(direction, true) }
 
       Keys.onPressed: function(event) {
-        if (stopConfirm.handleKey(event)) event.accepted = true
+        if (stopConfirm.handleKey(event)) { event.accepted = true; return }
+        if (!stopConfirm.opened && event.key >= Qt.Key_1 && event.key <= Qt.Key_9) {
+          root.selectPrinter(event.key - Qt.Key_1)
+          event.accepted = true
+        }
       }
 
       // One rhythm for the whole card rather than a number per place: blocks
@@ -432,6 +297,37 @@ Panel {
         id: content
         width: parent.width
         spacing: root.gap
+
+        // -- which printer --------------------------------------------------
+        //
+        // One chip per printer, the chosen one outlined. The dot carries the
+        // same news the bar mark does, so a printer that wants you is visible
+        // from the other tab. Keys 1-9 switch too.
+
+        RowLayout {
+          Layout.fillWidth: true
+          spacing: Style.space(8)
+          visible: root.printers.length > 1
+
+          Repeater {
+            model: root.printers
+            delegate: Chip {
+              icon: "\uf111"
+              iconColor: modelData.alert ? Commons.Color.urgent
+                         : modelData.busy ? Commons.Color.accent
+                         : Util.alpha(root.foreground, modelData.connected ? 0.6 : 0.2)
+              text: modelData.name
+                    + (modelData.busy && modelData.state ? "  " + modelData.state.percent + "%" : "")
+              hasCursor: index === root.selected
+              interactive: true
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              onClicked: root.selectPrinter(index)
+            }
+          }
+
+          Item { Layout.fillWidth: true }
+        }
 
         // -- the printer, and the controls ---------------------------------
 
@@ -984,18 +880,24 @@ Panel {
   }
 
   onOpenedChanged: {
+    if (service) service.openPanels = Math.max(0, service.openPanels + (opened ? 1 : -1))
     if (!opened) {
       stopPending = false
-      // Dropped rather than kept: the next frame is seconds away, and a stale
-      // picture of the chamber is exactly the thing you would misread.
-      frame = ""
-      cameraOk = false
       return
     }
+    // Open on whichever printer wants you, else the one that is printing,
+    // else wherever you were.
+    if (service) {
+      var pick = -1
+      for (var i = 0; i < printers.length && pick < 0; i++) if (printers[i].alert) pick = i
+      if (pick < 0 && !busy)
+        for (var j = 0; j < printers.length && pick < 0; j++) if (printers[j].busy) pick = j
+      if (pick >= 0) service.selected = pick
+    }
     cursor = firstEnabled()
-    commandError = ""
+    if (cur) cur.commandError = ""
     // Opening the panel is you having seen it.
-    celebrating = false
+    for (var k = 0; k < printers.length; k++) printers[k].celebrating = false
   }
 
   Process { id: wikiProc }
