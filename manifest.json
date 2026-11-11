@@ -8,10 +8,12 @@
   "homepage": "https://github.com/jankeesvw/omarchy-bambu-lab",
   "license": "MIT",
   "kinds": [
+    "service",
     "bar-widget"
   ],
   "entryPoints": {
-    "barWidget": "Panel.qml"
+    "barWidget": "Panel.qml",
+    "service": "Service.qml"
   },
   "barWidget": {
     "displayName": "Bambu Lab",

@@ -112,6 +112,26 @@ Built and tested against a **P1S**.
 
 **The buttons are the other way round.** The cloud-blocks-local-control behaviour above is P1-only, so an X1 or an A1 should take stop, pause and resume without being put in LAN Only mode.
 
+The **A2L** has been run against too: its AMS lite numbers itself differently from the AMS on a P1, which the spools now account for.
+
+## More than one printer
+
+The first printer is the one set up above. Every other one gets a name of your choosing, which `bambu` keeps its pin and access code under, apart from the first:
+
+```bash
+~/.config/omarchy/plugins/jankeesvw.bambu-lab/bin/bambu --profile a2l trust --host 192.168.1.43
+install -m 600 /dev/null ~/.config/omarchy-bambu-lab-a2l/access-code
+printf %s YOUR_CODE > ~/.config/omarchy-bambu-lab-a2l/access-code
+```
+
+The name is lowercase letters, digits and dashes. The next time you open the panel there is a row of tabs along the top, one per printer, each with a dot that lights while that printer works and turns red when it wants you. Click one, or press its number. The panel opens on whichever printer needs you, else the one that is printing.
+
+There is still one mark in the bar. It lights while any of them is working and turns red when any of them wants you, and its tooltip has a line for each.
+
+With a single printer none of this shows: no tabs, and the panel is the one described above.
+
+One connection per printer, whatever the number of screens. A Bambu printer only answers three MQTT clients at a time, and an earlier version of this widget opened a connection for every monitor's bar -- which on three screens was all of them, and left Bambu Studio's LAN mode, or `bambu watch` in a terminal, looking at a printer that never answered.
+
 ## Settings
 
 Right-click the bar and choose Configure, or edit `~/.config/omarchy/shell.json`.
@@ -130,12 +150,15 @@ Right-click the bar and choose Configure, or edit `~/.config/omarchy/shell.json`
 
 ```bash
 bambu status                 # what is set up and what is missing
+bambu profiles               # the printers that are set up, as JSON
 bambu watch                  # printer state as JSON, a line per change
 bambu camera                 # chamber frames; prints the path of each
 bambu pause | resume | stop
 bambu light on | off
 bambu demo on | off          # fixed data for screenshots; commands do nothing
 ```
+
+Any of these takes `--profile <name>` for a printer other than the first.
 
 ## If something is not working
 
@@ -169,12 +192,12 @@ omarchy plugin remove jankeesvw.bambu-lab
 
 That takes the widget and leaves two directories.
 
-`~/.config/omarchy-bambu-lab/` holds your **access code**, the **pinned certificate**, and your printer's serial and address. The access code is the one that matters: it is a live credential for your printer.
+`~/.config/omarchy-bambu-lab/` (and `-<name>` beside it for every further printer) holds your **access code**, the **pinned certificate**, and your printer's serial and address. The access code is the one that matters: it is a live credential for your printer.
 
 `~/.cache/omarchy-bambu-lab/` holds the **last few camera frames**, pictures of the inside of whatever room your printer is in. Only four, always overwritten, never uploaded anywhere, but they are on your disk and you should know it.
 
 ```bash
-rm -r ~/.config/omarchy-bambu-lab ~/.cache/omarchy-bambu-lab
+rm -r ~/.config/omarchy-bambu-lab* ~/.cache/omarchy-bambu-lab*
 ```
 
 Nothing else is written anywhere. No history, no print log.
