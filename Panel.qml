@@ -885,13 +885,18 @@ Panel {
       stopPending = false
       return
     }
-    // Open on whichever printer wants you, else the one that is printing,
-    // else wherever you were.
+    // Open on the printer that is working. With more than one working, stay on
+    // the one you last chose. With none working, open on one that has
+    // something to say, else wherever you were. An alert alone does not win
+    // over a running print: a standing HMS warning on an idle printer would
+    // otherwise pull every opening away from the job in progress.
     if (service) {
+      var working = []
+      for (var i = 0; i < printers.length; i++) if (printers[i].busy) working.push(i)
       var pick = -1
-      for (var i = 0; i < printers.length && pick < 0; i++) if (printers[i].alert) pick = i
-      if (pick < 0 && !busy)
-        for (var j = 0; j < printers.length && pick < 0; j++) if (printers[j].busy) pick = j
+      if (working.length === 1) pick = working[0]
+      else if (working.length === 0)
+        for (var j = 0; j < printers.length && pick < 0; j++) if (printers[j].alert) pick = j
       if (pick >= 0) service.selected = pick
     }
     cursor = firstEnabled()
