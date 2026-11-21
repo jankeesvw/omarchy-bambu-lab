@@ -8,10 +8,14 @@
 #   bambu light on | off           the chamber light
 #   bambu demo on | off            fixed state for screenshots; commands become no-ops
 #   bambu status                   what is set up, and what is missing
+#   bambu profiles                 the printers that are set up, as JSON
 #
 # Options, before the command:
 #   --host <address>    printer address       (default: whatever trust pinned)
 #   --serial <serial>   override the serial   (default: read from the certificate)
+#   --profile <name>    a second printer, and a third: each keeps its own
+#                       pin and code in omarchy-bambu-lab-<name>
+#                       (default: the unsuffixed directory, the first printer)
 #
 # The printer speaks MQTT over TLS and hands its whole state to anybody on the
 # network with the LAN access code. That code is the only credential there is,
@@ -52,6 +56,7 @@ DEMO_FRAME="${HERE%/bin}/demo/chamber.jpg"
 
 HOST=""
 SERIAL=""
+PROFILE=""
 
 die() { printf 'bambu: %s\n' "$*" >&2; exit 1; }
 
@@ -281,6 +286,26 @@ cmd_status() {
   return 0
 }
 
+# Every printer that has been pinned, for the widget to give each one a tab.
+# The unsuffixed directory is the first printer, and it is listed even before
+# anything is pinned there when nothing else is either: an install that has
+# not been pointed at a printer yet still wants its setup steps drawn.
+cmd_profiles() {
+  local base="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy-bambu-lab" dir name
+  local found=()
+  for dir in "$base"-*/; do
+    [ -d "$dir" ] && [ ! -L "${dir%/}" ] || continue
+    name="${dir%/}"; name="${name#"$base"-}"
+    [[ "$name" =~ ^[a-z0-9][a-z0-9-]{0,31}$ ]] || continue
+    readable_file "$dir/printer.json" || continue
+    found+=("$name")
+  done
+  if readable_file "$base/printer.json" || [ ${#found[@]} -eq 0 ]; then
+    found=("" ${found[@]+"${found[@]}"})
+  fi
+  printf '%s\n' ${found[@]+"${found[@]}"} | jq -R . | jq -sc .
+}
+
 # ------------------------------------------------------------------------ main
 
 # Options are taken from anywhere in the line: `bambu trust --host x` is how
@@ -291,12 +316,24 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --host)   [ $# -ge 2 ] || die "--host needs a value"; HOST="$2"; shift 2 ;;
     --serial) [ $# -ge 2 ] || die "--serial needs a value"; SERIAL="$2"; shift 2 ;;
+    --profile) [ $# -ge 2 ] || die "--profile needs a value"; PROFILE="$2"; shift 2 ;;
     --) shift; while [[ $# -gt 0 ]]; do ARGS+=("$1"); shift; done ;;
     -*) die "unknown option $1" ;;
     *) ARGS+=("$1"); shift ;;
   esac
 done
 set -- ${ARGS[@]+"${ARGS[@]}"}
+
+# A second printer keeps everything -- code, pin, frames -- in a directory of
+# its own, so nothing one printer holds can be handed to the other.
+if [ -n "$PROFILE" ]; then
+  [[ "$PROFILE" =~ ^[a-z0-9][a-z0-9-]{0,31}$ ]] || die "a profile is lowercase letters, digits and dashes"
+  CONFIG_DIR="$CONFIG_DIR-$PROFILE"
+  CACHE_DIR="$CACHE_DIR-$PROFILE"
+  CODE_FILE="$CONFIG_DIR/access-code"
+  PRINTER_FILE="$CONFIG_DIR/printer.json"
+  DEMO_FILE="$CONFIG_DIR/demo"
+fi
 
 [ -n "$HOST" ] && { valid_host "$HOST" || die "that does not look like an address"; }
 [ -n "$SERIAL" ] && { valid_serial "$SERIAL" || die "that does not look like a serial number"; }
@@ -359,5 +396,6 @@ case "${1:-status}" in
     esac
     ;;
   status) cmd_status ;;
+  profiles) cmd_profiles ;;
   *) die "unknown command ${1}" ;;
 esac
