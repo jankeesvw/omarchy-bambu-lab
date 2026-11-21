@@ -147,8 +147,8 @@ Panel {
   readonly property var setupSteps: [
     {
       number: "1",
-      title: "Turn on LAN Mode on the printer",
-      body: "Settings, then Network. The access code is on that same screen.",
+      title: "Find the access code on the printer",
+      body: "Settings, then the WLAN or network page. LAN Only Mode can stay off.",
       code: "",
       done: root.setupStage === "no-code",
     },
@@ -592,7 +592,7 @@ Panel {
                     : root.cameraDemo
                       ? "Camera"
                       : root.cameraError !== ""
-                        ? "No camera. Turn on LAN Mode Liveview on the printer."
+                        ? "No camera. Turn on LAN Mode Liveview on the printer; LAN Only Mode can stay off."
                         : "Looking for the camera…"
               font.family: root.fontFamily
               font.pixelSize: Style.font.bodySmall

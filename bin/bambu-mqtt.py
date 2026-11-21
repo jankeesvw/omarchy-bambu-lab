@@ -317,8 +317,8 @@ CONNACK_ERRORS = {
     1: "the printer rejected the protocol version",
     2: "the printer rejected the client id",
     3: "the printer is not accepting connections",
-    4: "Wrong access code. It is on the printer screen under Settings, Network, LAN Mode.",
-    5: "Wrong access code. It is on the printer screen under Settings, Network, LAN Mode.",
+    4: "Wrong access code. It is on the printer screen under Settings, on the WLAN or network page.",
+    5: "Wrong access code. It is on the printer screen under Settings, on the WLAN or network page.",
 }
 
 # Refusals worth stopping for rather than retrying.
