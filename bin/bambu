@@ -161,7 +161,7 @@ cmd_trust() {
 
   cert="$(openssl s_client -connect "$host:8883" -showcerts </dev/null 2>/dev/null \
           | openssl x509 -outform PEM 2>/dev/null)"
-  [ -n "$cert" ] || die "no certificate came back from $host:8883 -- is the printer on, and is LAN mode enabled?"
+  [ -n "$cert" ] || die "no certificate came back from $host:8883 -- is the printer on, and is that its address?"
 
   subject="$(printf '%s' "$cert" | openssl x509 -noout -subject -nameopt multiline 2>/dev/null \
              | sed -n 's/^ *commonName *= *//p')"
@@ -208,8 +208,9 @@ cmd_trust() {
 
   printf '\nPinned.\n'
   if ! readable_file "$CODE_FILE"; then
-    printf '\nOne thing left: the LAN access code, from the printer screen under\n'
-    printf 'Settings, Network, LAN Mode. Put it in a file only you can read:\n\n'
+    printf '\nOne thing left: the access code, from the printer screen under Settings,\n'
+    printf 'on the WLAN or network page. LAN Only Mode can stay off. Put it in a file\n'
+    printf 'only you can read:\n\n'
     printf '  install -m 600 /dev/null %s\n' "$CODE_FILE"
     printf '  printf %%s YOUR_CODE > %s\n\n' "$CODE_FILE"
   fi
